@@ -89,15 +89,15 @@ public:
 	virtual ~MP1Node();
 };
 
-struct Message {
+struct MessageMP1 {
     MsgTypes message_type;
     Address addr;
     long heartbeat;
     vector<MemberListEntry> members;
-    Message();
-    Message(MsgTypes t, Address a, long hb, vector<MemberListEntry> m);
+    MessageMP1();
+    MessageMP1(MsgTypes t, Address a, long hb, vector<MemberListEntry> m);
     //Unpack packed message
-    Message(char* packed_message, size_t message_size);
+    MessageMP1(char* packed_message, size_t message_size);
     pair<char*, size_t> Pack(bool pack_data);
 };
 

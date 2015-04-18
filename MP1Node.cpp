@@ -231,7 +231,7 @@ bool MP1Node::recvCallBack(void *env, char *data, int size ) {
         return false;
     }
 	try {
-        Message msg(data, size);
+        MessageMP1 msg(data, size);
         pair<int, short> idPort = getIdPort(msg.addr);
         MemberListEntry new_entry(idPort.first, idPort.second, msg.heartbeat, timestamp);
         switch (msg.message_type) {
@@ -408,7 +408,7 @@ void MP1Node::mergeMembers(const vector<MemberListEntry>& members, long timestam
 }
 
 void MP1Node::sendMessage(Address& joinaddr, MsgTypes type, bool pack_data) {
-    Message msg(type, memberNode->addr, memberNode->heartbeat, memberNode->memberList);
+    MessageMP1 msg(type, memberNode->addr, memberNode->heartbeat, memberNode->memberList);
     pair<char*, size_t> data = msg.Pack(pack_data);
     if (!!data.first) {
         emulNet->ENsend(&memberNode->addr, &joinaddr, data.first, data.second);
@@ -422,16 +422,16 @@ void MP1Node::sendMessage(Address& joinaddr, MsgTypes type, bool pack_data) {
     }
 }
 
-Message::Message() {}
+MessageMP1::MessageMP1() {}
 
-Message::Message(MsgTypes t, Address a, long hb, vector<MemberListEntry> m) :
+MessageMP1::MessageMP1(MsgTypes t, Address a, long hb, vector<MemberListEntry> m) :
     message_type(t)
     , addr(a)
     , heartbeat(hb)
     , members(m) {}
 
 //Unpack packed message
-Message::Message(char* packed_message, size_t message_size) {
+MessageMP1::MessageMP1(char* packed_message, size_t message_size) {
     size_t min_size = sizeof(message_type) + sizeof(addr) + sizeof(heartbeat);
     if (message_size < min_size){
         message_type = FAILEDMESSAGE;
@@ -460,7 +460,7 @@ Message::Message(char* packed_message, size_t message_size) {
     }
 }
 
-pair<char*, size_t> Message::Pack(bool pack_data) {
+pair<char*, size_t> MessageMP1::Pack(bool pack_data) {
     size_t msgsize = sizeof(MsgTypes) + sizeof(Address) + sizeof(long);
     if (pack_data) {
         msgsize += sizeof(size_t) + members.size() * sizeof(MemberListEntry);
