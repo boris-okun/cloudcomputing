@@ -19,6 +19,35 @@
 #include "Message.h"
 #include "Queue.h"
 
+#include <map>
+using namespace std;
+
+struct TransData {
+    int transId;
+    MessageType type;
+    string key;
+    string value;
+    size_t replyNumber;
+    vector<pair<int, string>> replies; //replies for read <TransId, value>
+
+    TransData(int id, MessageType t, string k) :
+        transId(id),
+        type(t),
+        key(k),
+        replyNumber(0)
+    {}
+
+    TransData(int id, MessageType t, string k, string v) :
+        transId(id),
+        type(t),
+        key(k),
+        value(v),
+        replyNumber(0)
+    {}
+};
+
+typedef map<int, TransData> TransMap;
+
 /**
  * CLASS NAME: MP2Node
  *
@@ -48,6 +77,10 @@ private:
 	// Object of Log
 	Log * log;
 
+	int TransId;
+
+	TransMap WaitList;
+
 public:
 	MP2Node(Member *memberNode, Params *par, EmulNet *emulNet, Log *log, Address *addressOfMember);
 	Member * getMemberNode() {
@@ -73,6 +106,8 @@ public:
 	// handle messages from receiving queue
 	void checkMessages();
 
+	void HandleReplies(Message reply);
+
 	// coordinator dispatches messages to corresponding nodes
 	void dispatchMessages(Message message);
 
@@ -80,9 +115,9 @@ public:
 	vector<Node> findNodes(string key);
 
 	// server
-	bool createKeyValue(string key, string value, ReplicaType replica);
+	bool createKeyValue(string key, string value/*, ReplicaType replica*/);
 	string readKey(string key);
-	bool updateKeyValue(string key, string value, ReplicaType replica);
+	bool updateKeyValue(string key, string value/*, ReplicaType replica*/);
 	bool deletekey(string key);
 
 	// stabilization protocol - handle multiple failures

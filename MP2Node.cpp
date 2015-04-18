@@ -5,6 +5,8 @@
  **********************************/
 #include "MP2Node.h"
 
+const string delimiter = "::";
+
 /**
  * constructor
  */
@@ -52,6 +54,7 @@ void MP2Node::updateRing() {
 	// Sort the list based on the hashCode
 	sort(curMemList.begin(), curMemList.end());
 
+	ring = curMemList;
 
 	/*
 	 * Step 3: Run the stabilization protocol IF REQUIRED
@@ -108,9 +111,13 @@ size_t MP2Node::hashFunction(string key) {
  * 				3) Sends a message to the replica
  */
 void MP2Node::clientCreate(string key, string value) {
-	/*
-	 * Implement this
-	 */
+	Message createMessage(g_transID, memberNode->addr, CREATE, key, value);
+	vector<Node> nodes = findNodes(key);
+    for (auto& node : nodes) {
+        emulNet->ENsend(&memberNode->addr, node.getAddress(), createMessage.toString());
+    }
+	WaitList.insert(make_pair(g_transID, TransData(g_transID, CREATE, key, value)));
+	++g_transID;
 }
 
 /**
@@ -166,10 +173,8 @@ void MP2Node::clientDelete(string key){
  * 			   	1) Inserts key value into the local hash table
  * 			   	2) Return true or false based on success or failure
  */
-bool MP2Node::createKeyValue(string key, string value, ReplicaType replica) {
-	/*
-	 * Implement this
-	 */
+bool MP2Node::createKeyValue(string key, string value/*, ReplicaType replica*/) {
+	return ht->hashTable.emplace(key, value).second;
 	// Insert key, value, replicaType into the hash table
 }
 
@@ -196,7 +201,7 @@ string MP2Node::readKey(string key) {
  * 				1) Update the key to the new value in the local hash table
  * 				2) Return true or false based on success or failure
  */
-bool MP2Node::updateKeyValue(string key, string value, ReplicaType replica) {
+bool MP2Node::updateKeyValue(string key, string value/*, ReplicaType replica*/) {
 	/*
 	 * Implement this
 	 */
@@ -216,6 +221,25 @@ bool MP2Node::deletekey(string key) {
 	 * Implement this
 	 */
 	// Delete the key from the local hash table
+}
+
+
+void MP2Node::HandleReplies(Message reply) {
+    auto it = WaitList.find(reply.transID);
+    if (it != WaitList.end()) {
+        TransData& data = it->second;
+        switch (data.type) {
+            case (CREATE) :
+            {
+                ++data.replyNumber;
+                if (data.replyNumber >= 2) { //quorum
+                    log->logCreateSuccess(&memberNode->addr, true, reply.transID, data.key, data.value);
+                    WaitList.erase(it);
+                }
+            }
+            break;
+        }
+    }
 }
 
 /**
@@ -247,11 +271,24 @@ void MP2Node::checkMessages() {
 		memberNode->mp2q.pop();
 
 		string message(data, data + size);
+		Message msg(message);
 
-		/*
-		 * Handle the message types here
-		 */
-
+		switch (msg.type) {
+            case (CREATE) :
+            {
+                string transVal = to_string(msg.transID) + delimiter + msg.value;
+                bool success = createKeyValue(msg.key, transVal);
+                Message reply(msg.transID, memberNode->addr, REPLY, success);
+                emulNet->ENsend(&memberNode->addr, &msg.fromAddr, reply.toString());
+                if (success)
+                    log->logCreateSuccess(&memberNode->addr, false, msg.transID, msg.key, msg.value);
+                else
+                    log->logCreateFail(&memberNode->addr, false, msg.transID, msg.key, msg.value);
+            }
+            case (REPLY) :
+                HandleReplies(msg);
+            break;
+		}
 	}
 
 	/*
