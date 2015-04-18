@@ -28,13 +28,16 @@ struct TransData {
     string key;
     string value;
     size_t replyNumber;
-    vector<pair<int, string>> replies; //replies for read <TransId, value>
+    size_t failedNumber;
+    pair<int, string> bestValue; //freshest reply for read <TransId, value>
 
     TransData(int id, MessageType t, string k) :
         transId(id),
         type(t),
         key(k),
-        replyNumber(0)
+        replyNumber(0),
+        failedNumber(0),
+        bestValue(make_pair(-1, ""))
     {}
 
     TransData(int id, MessageType t, string k, string v) :
@@ -42,7 +45,9 @@ struct TransData {
         type(t),
         key(k),
         value(v),
-        replyNumber(0)
+        replyNumber(0),
+        failedNumber(0),
+        bestValue(make_pair(-1, ""))
     {}
 };
 

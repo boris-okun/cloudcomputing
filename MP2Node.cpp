@@ -5,7 +5,7 @@
  **********************************/
 #include "MP2Node.h"
 
-const string delimiter = "::";
+const string delimiter = "@@";
 
 /**
  * constructor
@@ -131,9 +131,13 @@ void MP2Node::clientCreate(string key, string value) {
  * 				3) Sends a message to the replica
  */
 void MP2Node::clientRead(string key){
-	/*
-	 * Implement this
-	 */
+	Message createMessage(g_transID, memberNode->addr, READ, key);
+	vector<Node> nodes = findNodes(key);
+    for (auto& node : nodes) {
+        emulNet->ENsend(&memberNode->addr, node.getAddress(), createMessage.toString());
+    }
+	WaitList.insert(make_pair(g_transID, TransData(g_transID, READ, key)));
+	++g_transID;
 }
 
 /**
@@ -192,10 +196,7 @@ bool MP2Node::createKeyValue(string key, string value, int transId/*, ReplicaTyp
  * 			    2) Return value
  */
 string MP2Node::readKey(string key) {
-	/*
-	 * Implement this
-	 */
-	// Read key from local hash table and return value
+	return ht->read(key);
 }
 
 /**
@@ -248,6 +249,30 @@ void MP2Node::HandleReplies(Message reply) {
                     } else {
                         log->logDeleteFail(&memberNode->addr, true, reply.transID, data.key);
                         WaitList.erase(it);
+                    }
+                }
+                break;
+            case (READ) :
+                {
+                    string& idVal = reply.value;
+                    if (!idVal.empty()) {
+                        ++data.replyNumber;
+
+                        size_t pos = idVal.find(delimiter);
+                        int transId = stoi(idVal.substr(0, pos));
+                        string value = idVal.substr(pos + 2);
+                        if (transId > data.bestValue.first)
+                            data.bestValue = make_pair(transId, value);
+                        if (data.replyNumber >= 2) {
+                            log->logReadSuccess(&memberNode->addr, true, reply.transID, data.key, data.bestValue.second);
+                            WaitList.erase(it);
+                        }
+                    } else {
+                        ++data.failedNumber;
+                        if (data.failedNumber > 1) {
+                            log->logReadFail(&memberNode->addr, true, reply.transID, data.key);
+                            WaitList.erase(it);
+                        }
                     }
                 }
                 break;
@@ -309,10 +334,25 @@ void MP2Node::checkMessages() {
                         log->logDeleteFail(&memberNode->addr, false, msg.transID, msg.key);
                 }
                 break;
-
+            case (READ) :
+                {
+                    string idVal = readKey(msg.key);
+                    Message reply(msg.transID, memberNode->addr, idVal);
+                    emulNet->ENsend(&memberNode->addr, &msg.fromAddr, reply.toString());
+                    if (!idVal.empty()) {
+                        size_t pos = idVal.find(delimiter);
+                        string value = idVal.substr(pos + 2);
+                        log->logReadSuccess(&memberNode->addr, false, msg.transID, msg.key, value);
+                    } else
+                        log->logReadFail(&memberNode->addr, false, msg.transID, msg.key);
+                }
+                break;
             case (REPLY) :
                 HandleReplies(msg);
-            break;
+                break;
+            case (READREPLY) :
+                HandleReplies(msg);
+                break;
 		}
 	}
 
