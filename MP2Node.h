@@ -24,6 +24,7 @@ using namespace std;
 
 struct TransData {
     int transId;
+    long timestamp;
     MessageType type;
     string key;
     string value;
@@ -31,8 +32,9 @@ struct TransData {
     size_t failedNumber;
     pair<int, string> bestValue; //freshest reply for read <TransId, value>
 
-    TransData(int id, MessageType t, string k) :
+    TransData(int id, long ts, MessageType t, string k) :
         transId(id),
+        timestamp(ts),
         type(t),
         key(k),
         replyNumber(0),
@@ -40,8 +42,9 @@ struct TransData {
         bestValue(make_pair(-1, ""))
     {}
 
-    TransData(int id, MessageType t, string k, string v) :
+    TransData(int id, long ts, MessageType t, string k, string v) :
         transId(id),
+        timestamp(ts),
         type(t),
         key(k),
         value(v),
@@ -127,6 +130,8 @@ public:
 
 	// stabilization protocol - handle multiple failures
 	void stabilizationProtocol();
+
+	void checkTimeouts();
 
 	~MP2Node();
 };

@@ -6,6 +6,7 @@
 #include "MP2Node.h"
 
 const string delimiter = "@@";
+const long timeout = 10;
 
 /**
  * constructor
@@ -117,7 +118,7 @@ void MP2Node::clientCreate(string key, string value) {
     for (auto& node : nodes) {
         emulNet->ENsend(&memberNode->addr, node.getAddress(), createMessage.toString());
     }
-	WaitList.insert(make_pair(g_transID, TransData(g_transID, CREATE, key, value)));
+	WaitList.insert(make_pair(g_transID, TransData(g_transID, par->getcurrtime(), CREATE, key, value)));
 	++g_transID;
 }
 
@@ -136,7 +137,7 @@ void MP2Node::clientRead(string key){
     for (auto& node : nodes) {
         emulNet->ENsend(&memberNode->addr, node.getAddress(), createMessage.toString());
     }
-	WaitList.insert(make_pair(g_transID, TransData(g_transID, READ, key)));
+	WaitList.insert(make_pair(g_transID, TransData(g_transID, par->getcurrtime(), READ, key)));
 	++g_transID;
 }
 
@@ -150,9 +151,13 @@ void MP2Node::clientRead(string key){
  * 				3) Sends a message to the replica
  */
 void MP2Node::clientUpdate(string key, string value){
-	/*
-	 * Implement this
-	 */
+	Message createMessage(g_transID, memberNode->addr, UPDATE, key, value);
+	vector<Node> nodes = findNodes(key);
+    for (auto& node : nodes) {
+        emulNet->ENsend(&memberNode->addr, node.getAddress(), createMessage.toString());
+    }
+	WaitList.insert(make_pair(g_transID, TransData(g_transID, par->getcurrtime(), UPDATE, key, value)));
+	++g_transID;
 }
 
 /**
@@ -170,7 +175,7 @@ void MP2Node::clientDelete(string key){
     for (auto& node : nodes) {
         emulNet->ENsend(&memberNode->addr, node.getAddress(), createMessage.toString());
     }
-	WaitList.insert(make_pair(g_transID, TransData(g_transID, DELETE, key)));
+	WaitList.insert(make_pair(g_transID, TransData(g_transID, par->getcurrtime(), DELETE, key)));
 	++g_transID;
 }
 
@@ -208,7 +213,7 @@ string MP2Node::readKey(string key) {
  * 				2) Return true or false based on success or failure
  */
 bool MP2Node::updateKeyValue(string key, string value/*, ReplicaType replica*/) {
-	// Update key in local hash table and return true or false
+	return ht->update(key, value);
 }
 
 /**
@@ -276,7 +281,48 @@ void MP2Node::HandleReplies(Message reply) {
                     }
                 }
                 break;
+            case (UPDATE) :
+                {
+                    if (reply.success) {
+                        ++data.replyNumber;
+                        if (data.replyNumber >= 2) {
+                            log->logUpdateSuccess(&memberNode->addr, true, reply.transID, data.key, data.value);
+                            WaitList.erase(it);
+                        }
+                    } else {
+                        ++data.failedNumber;
+                        if (data.failedNumber > 1) {
+                            log->logUpdateFail(&memberNode->addr, true, reply.transID, data.key, data.value);
+                            WaitList.erase(it);
+                        }
+                    }
+                }
+                break;
         }
+    }
+}
+
+void MP2Node::checkTimeouts() {
+    long curTimestamp = par->getcurrtime();
+    for (auto it = WaitList.begin(); it != WaitList.end(); ++it) {
+        TransData& data = it->second;
+        if (curTimestamp - data.timestamp <= timeout)
+            continue;
+        switch (data.type) {
+            case (CREATE) :
+                log->logCreateFail(&memberNode->addr, true, data.transId, data.key, data.value);
+                break;
+            case (DELETE) :
+                log->logDeleteFail(&memberNode->addr, true, data.transId, data.key);
+                break;
+            case (READ) :
+                log->logReadFail(&memberNode->addr, true, data.transId, data.key);
+                break;
+            case (UPDATE) :
+                log->logUpdateFail(&memberNode->addr, true, data.transId, data.key, data.value);
+                break;
+        }
+        WaitList.erase(it);
     }
 }
 
@@ -347,6 +393,17 @@ void MP2Node::checkMessages() {
                         log->logReadFail(&memberNode->addr, false, msg.transID, msg.key);
                 }
                 break;
+            case (UPDATE) :
+                {
+                    bool success = updateKeyValue(msg.key, msg.value);
+                    Message reply(msg.transID, memberNode->addr, REPLY, success);
+                    emulNet->ENsend(&memberNode->addr, &msg.fromAddr, reply.toString());
+                    if (success)
+                        log->logUpdateSuccess(&memberNode->addr, false, msg.transID, msg.key, msg.value);
+                    else
+                        log->logUpdateFail(&memberNode->addr, false, msg.transID, msg.key, msg.value);
+                }
+                break;
             case (REPLY) :
                 HandleReplies(msg);
                 break;
@@ -355,6 +412,7 @@ void MP2Node::checkMessages() {
                 break;
 		}
 	}
+	checkTimeouts();
 
 	/*
 	 * This function should also ensure all READ and UPDATE operation
