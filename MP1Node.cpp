@@ -11,25 +11,6 @@
  * Note: You can change/add any functions in MP1Node.{h,cpp}
  */
 
- namespace {
-    pair<int, short> getIdPort(Address& addr) {
-        int id = 0;
-		short port;
-		char* a = addr.addr;
-		memcpy(&id, &a[0], sizeof(int));
-		memcpy(&port, &a[4], sizeof(short));
-		return make_pair(id, port);
-    }
-
-    Address getAddress(int id, short port) {
-        Address addr;
-        char* a = addr.addr;
-        memcpy(&a[0], &id, sizeof(int));
-        memcpy(&a[4], &port, sizeof(short));
-        return addr;
-    }
- }
-
 /**
  * Overloaded Constructor of the MP1Node class
  * You can add new members to the class if you think it
@@ -137,6 +118,7 @@ int MP1Node::initThisNode(Address *joinaddr) {
  * DESCRIPTION: Join the distributed system
  */
 int MP1Node::introduceSelfToGroup(Address *joinaddr) {
+	MessageHdr *msg;
 #ifdef DEBUGLOG
     static char s[1024];
 #endif
@@ -149,13 +131,23 @@ int MP1Node::introduceSelfToGroup(Address *joinaddr) {
         memberNode->inGroup = true;
     }
     else {
+        size_t msgsize = sizeof(MessageHdr) + sizeof(joinaddr->addr) + sizeof(long) + 1;
+        msg = (MessageHdr *) malloc(msgsize * sizeof(char));
+
+        // create JOINREQ message: format of data is {struct Address myaddr}
+        msg->msgType = JOINREQ;
+        memcpy((char *)(msg+1), &memberNode->addr.addr, sizeof(memberNode->addr.addr));
+        memcpy((char *)(msg+1) + 1 + sizeof(memberNode->addr.addr), &memberNode->heartbeat, sizeof(long));
+
 #ifdef DEBUGLOG
         sprintf(s, "Trying to join...");
         log->LOG(&memberNode->addr, s);
 #endif
 
         // send JOINREQ message to introducer member
-        sendMessage(*joinaddr, JOINREQ, false);
+        emulNet->ENsend(&memberNode->addr, joinaddr, (char *)msg, msgsize);
+
+        free(msg);
     }
 
     return 1;
@@ -223,57 +215,9 @@ void MP1Node::checkMessages() {
  * DESCRIPTION: Message handler for different message types
  */
 bool MP1Node::recvCallBack(void *env, char *data, int size ) {
-	long timestamp = par->getcurrtime();
-	if (!data) {
-#ifdef DEBUGLOG
-            log->LOG(&memberNode->addr, "Empty message recieved");
-#endif
-        return false;
-    }
-	try {
-        Message msg(data, size);
-        pair<int, short> idPort = getIdPort(msg.addr);
-        MemberListEntry new_entry(idPort.first, idPort.second, msg.heartbeat, timestamp);
-        switch (msg.message_type) {
-            case (JOINREQ) :
-                {
-                    addMember(new_entry);
-                    sendMessage(msg.addr, JOINREP, true);
-                }
-                break;
-            case (JOINREP) :
-                {
-                    addMember(new_entry);
-                    mergeMembers(msg.members, timestamp);
-                    memberNode->inGroup = true;
-                }
-                break;
-            case (PINGREQ) :
-                {
-                    addMember(new_entry);
-                    mergeMembers(msg.members, timestamp);
-                    sendMessage(msg.addr, PINGREP, true);
-                }
-                break;
-            case (PINGREP) :
-                {
-                    addMember(new_entry);
-                    mergeMembers(msg.members, timestamp);
-                }
-                break;
-            //case (LEAVEREQ) :
-                //process
-            //    break;
-            //case (LEAVEREP) :
-                //process
-            //    break;
-            }
-        }
-    catch(...) {
-#ifdef DEBUGLOG
-        log->LOG(&memberNode->addr, "Failed to unpack message");
-#endif
-    }
+	/*
+	 * Your code goes here
+	 */
 }
 
 /**
@@ -284,31 +228,6 @@ bool MP1Node::recvCallBack(void *env, char *data, int size ) {
  * 				Propagate your membership list
  */
 void MP1Node::nodeLoopOps() {
-    size_t randomId = rand() % memberNode->memberList.size();
-    MemberListEntry& randomMember = memberNode->memberList[randomId];
-    Address addr = getAddress(randomMember.getid(), randomMember.getport());
-    sendMessage(addr, PINGREQ, true);
-#ifdef DEBUGLOG
-//                log->LOG(&memberNode->addr, "ping, %d", addr.addr[0]);
-#endif
-    long timestamp = par->getcurrtime();
-    for (auto it = memberNode->memberList.begin(); it != memberNode->memberList.end();) {
-        if (timestamp - it->timestamp > 40) {
-            failedItems.push_back(*it);
-            Address addr = getAddress(it->id, it->port);
-            log->logNodeRemove(&memberNode->addr, &addr);
-            it = memberNode->memberList.erase(it);
-        }
-        else
-            ++it;
-    }
-
-    for (auto it = failedItems.begin(); it != failedItems.end();) {
-        if (timestamp - it->timestamp > 80)
-            it = failedItems.erase(it);
-        else
-            ++it;
-    }
 
 	/*
 	 * Your code goes here
@@ -358,132 +277,5 @@ void MP1Node::initMemberListTable(Member *memberNode) {
 void MP1Node::printAddress(Address *addr)
 {
     printf("%d.%d.%d.%d:%d \n",  addr->addr[0],addr->addr[1],addr->addr[2],
-                                                       addr->addr[3], *(short*)&addr->addr[4]) ;
+                                                       addr->addr[3], *(short*)&addr->addr[4]) ;    
 }
-
-void MP1Node::addMember(const MemberListEntry& new_entry, long timestamp) {
-    Address new_addr = getAddress(new_entry.id, new_entry.port);
-    if (new_addr == memberNode->addr)
-        return;
-    for (auto &entry : memberNode->memberList) {
-        if (entry.id == new_entry.id && entry.port == new_entry.port) {
-            if (entry.heartbeat < new_entry.heartbeat) {
-#ifdef DEBUGLOG
-//                log->LOG(&memberNode->addr, "Update, %d", new_entry.id);
-#endif
-                entry.setheartbeat(new_entry.heartbeat);
-                if (timestamp)
-                    entry.settimestamp(timestamp);
-            }
-            return;
-        }
-    }
-    if (isFailed(new_entry))
-        return;
-    memberNode->memberList.push_back(new_entry);
-    if (timestamp)
-        memberNode->memberList.back().settimestamp(timestamp);
-    log->logNodeAdd(&memberNode->addr, &new_addr);
-}
-
-bool MP1Node::isFailed(const MemberListEntry& new_entry) {
-    for (auto it = failedItems.begin(); it != failedItems.end(); ++it) {
-        if (it->id == new_entry.id && it->port == new_entry.port) {
-            if (it->heartbeat < new_entry.heartbeat) {
-                failedItems.erase(it);
-                return false;
-            }
-            else
-                return true;
-        }
-    }
-    return false;
-}
-
-
-void MP1Node::mergeMembers(const vector<MemberListEntry>& members, long timestamp) {
-    for (auto &entry : members) {
-        addMember(entry, timestamp);
-    }
-}
-
-void MP1Node::sendMessage(Address& joinaddr, MsgTypes type, bool pack_data) {
-    Message msg(type, memberNode->addr, memberNode->heartbeat, memberNode->memberList);
-    pair<char*, size_t> data = msg.Pack(pack_data);
-    if (!!data.first) {
-        emulNet->ENsend(&memberNode->addr, &joinaddr, data.first, data.second);
-        free(data.first);
-        ++memberNode->heartbeat;
-    }
-    else {
-#ifdef DEBUGLOG
-        log->LOG(&memberNode->addr, "Failed to pack message");
-#endif
-    }
-}
-
-Message::Message() {}
-
-Message::Message(MsgTypes t, Address a, long hb, vector<MemberListEntry> m) :
-    message_type(t)
-    , addr(a)
-    , heartbeat(hb)
-    , members(m) {}
-
-//Unpack packed message
-Message::Message(char* packed_message, size_t message_size) {
-    size_t min_size = sizeof(message_type) + sizeof(addr) + sizeof(heartbeat);
-    if (message_size < min_size){
-        message_type = FAILEDMESSAGE;
-        return;
-    }
-    char* cur = packed_message;
-    memcpy(&message_type, cur, sizeof(message_type));
-    cur += sizeof(message_type);
-    memcpy(&addr, cur, sizeof(addr));
-    cur += sizeof(addr);
-    memcpy(&heartbeat, cur, sizeof(heartbeat));
-    cur += sizeof(heartbeat);
-    if (message_size >= min_size + sizeof(size_t)) {
-        size_t members_size;
-        memcpy(&members_size, cur, sizeof(size_t));
-        cur += sizeof(size_t);
-        if (members_size > 0) {
-            if (message_size >= min_size + sizeof(size_t) + members_size * sizeof(MemberListEntry)) {
-                members = vector<MemberListEntry>((MemberListEntry*)cur, (MemberListEntry*)cur + members_size);
-            }
-            else {
-                message_type = FAILEDMESSAGE;
-                return;
-            }
-        }
-    }
-}
-
-pair<char*, size_t> Message::Pack(bool pack_data) {
-    size_t msgsize = sizeof(MsgTypes) + sizeof(Address) + sizeof(long);
-    if (pack_data) {
-        msgsize += sizeof(size_t) + members.size() * sizeof(MemberListEntry);
-    }
-    char* msg = (char*) malloc(msgsize * sizeof(char));
-        if (!msg) {
-        return make_pair<char*, size_t>(nullptr, 0);
-    }
-    char* cur = msg;
-    memcpy(cur, &message_type, sizeof(message_type));
-    cur += sizeof(message_type);
-    memcpy(cur, &addr, sizeof(addr));
-    cur += sizeof(addr);
-    memcpy(cur, &heartbeat, sizeof(heartbeat));
-    cur += sizeof(heartbeat);
-    if (pack_data) {
-        size_t sizeoflist = members.size();
-        memcpy(cur, &sizeoflist, sizeof(size_t));
-        cur += sizeof(size_t);
-        if (sizeoflist > 0) {
-            memcpy(cur, &members.front(), sizeoflist * sizeof(MemberListEntry));
-        }
-    }
-    return make_pair(msg, msgsize);
-}
-
