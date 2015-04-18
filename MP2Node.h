@@ -19,7 +19,7 @@
 #include "Message.h"
 #include "Queue.h"
 
-#include <map>
+#include <set>
 using namespace std;
 
 struct TransData {
@@ -70,8 +70,10 @@ class MP2Node {
 private:
 	// Vector holding the next two neighbors in the ring who have my replicas
 	vector<Node> hasMyReplicas;
+	set<size_t> hasMyReplicasHashes;
 	// Vector holding the previous two neighbors in the ring whose replicas I have
 	vector<Node> haveReplicasOf;
+	set<size_t> haveReplicasOfHashes;
 	// Ring
 	vector<Node> ring;
 	// Hash Table
@@ -121,6 +123,7 @@ public:
 
 	// find the addresses of nodes that are responsible for a key
 	vector<Node> findNodes(string key);
+	vector<Node> findNodes(string key, vector<Node>& newRing);
 
 	// server
 	bool createKeyValue(string key, string value, int transId/*, ReplicaType replica*/);
@@ -129,7 +132,7 @@ public:
 	bool deleteKey(string key);
 
 	// stabilization protocol - handle multiple failures
-	void stabilizationProtocol();
+	void stabilizationProtocol(vector<Node>& oldRing, vector<Node>& hasMyreplicasDiff, vector<Node>& haveReplicasOfDiff);
 
 	void checkTimeouts();
 

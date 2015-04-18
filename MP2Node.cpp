@@ -56,8 +56,80 @@ void MP2Node::updateRing() {
 	// Sort the list based on the hashCode
 	sort(curMemList.begin(), curMemList.end());
 
-	ring = curMemList;
+	set<size_t> failedNodes;
+	for (auto it1 = ring.begin(), it2 = curMemList.begin(); it1 != ring.end() || it2 != curMemList.end();) {
+        if (it1 == ring.end()) {
+            ++it2;
+            continue;
+        }
+        if (it2 == curMemList.end() || it1->nodeHashCode < it2->nodeHashCode) {
+            failedNodes.insert(it1->nodeHashCode);
+            ++it1;
+        } else if (it1->nodeHashCode < it2->nodeHashCode) {
+            ++it2;
+        } else {
+            ++it1;
+            ++it2;
+        }
+	}
 
+    size_t myHash = Node(memberNode->addr).nodeHashCode;
+	vector<Node>::const_iterator myit;
+	for (auto it = curMemList.begin(); it != curMemList.end(); ++it) {
+        if (it->nodeHashCode == myHash) {
+            myit = it;
+            break;
+        }
+    }
+
+    vector<Node> newHasMyreplicas;
+    vector<Node> hasMyreplicasDiff; //new hasMyreplicas nodes
+    auto nextIt = ++myit;
+    for (int i = 0; i < 2; ++i, ++nextIt) {
+        if (nextIt != curMemList.end())
+            newHasMyreplicas.push_back(*nextIt);
+        else {
+            nextIt = curMemList.begin();
+            newHasMyreplicas.push_back(*nextIt);
+        }
+        if (!hasMyReplicasHashes.count(nextIt->nodeHashCode))
+            hasMyreplicasDiff.push_back(*nextIt);
+    }
+
+    vector<Node> newHaveReplicasOf;
+    vector<Node> haveReplicasOfdiff; //failed replicas
+    auto prevIt = myit;
+    for (int i = 0; i < 2; ++i) {
+        if (prevIt != curMemList.begin())
+            newHaveReplicasOf.push_back(*(--prevIt));
+        else {
+            prevIt = curMemList.end();
+            newHaveReplicasOf.push_back(*(--prevIt));
+        }
+    }
+
+    if (failedNodes.count(haveReplicasOf[1].nodeHashCode)) {
+        haveReplicasOfdiff.push_back(haveReplicasOf[1]);
+        if (failedNodes.count(haveReplicasOf[0].nodeHashCode))
+            haveReplicasOfdiff.push_back(haveReplicasOf[0]);
+    }
+
+    vector<Node> oldRing = ring;
+    ring = curMemList;
+    hasMyReplicas = newHasMyreplicas;
+    hasMyReplicasHashes.clear();
+    for (auto node : hasMyReplicas)
+        hasMyReplicasHashes.insert(node.nodeHashCode);
+
+    haveReplicasOf = newHaveReplicasOf;
+    haveReplicasOfHashes.clear();
+    for (auto node : haveReplicasOf)
+        haveReplicasOfHashes.insert(node.nodeHashCode);
+
+
+    bool needStab = (!hasMyreplicasDiff.empty() || !haveReplicasOfdiff.empty()) && !ht->isEmpty();
+    if (needStab)
+        stabilizationProtocol(oldRing, hasMyreplicasDiff, haveReplicasOfdiff);
 	/*
 	 * Step 3: Run the stabilization protocol IF REQUIRED
 	 */
@@ -427,23 +499,27 @@ void MP2Node::checkMessages() {
  * 				This function is responsible for finding the replicas of a key
  */
 vector<Node> MP2Node::findNodes(string key) {
+	return findNodes(key, ring);
+}
+
+vector<Node> MP2Node::findNodes(string key, vector<Node>& newRing) {
 	size_t pos = hashFunction(key);
 	vector<Node> addr_vec;
 	if (ring.size() >= 3) {
 		// if pos <= min || pos > max, the leader is the min
-		if (pos <= ring.at(0).getHashCode() || pos > ring.at(ring.size()-1).getHashCode()) {
-			addr_vec.emplace_back(ring.at(0));
-			addr_vec.emplace_back(ring.at(1));
-			addr_vec.emplace_back(ring.at(2));
+		if (pos <= newRing.at(0).getHashCode() || pos > newRing.at(ring.size()-1).getHashCode()) {
+			addr_vec.emplace_back(newRing.at(0));
+			addr_vec.emplace_back(newRing.at(1));
+			addr_vec.emplace_back(newRing.at(2));
 		}
 		else {
 			// go through the ring until pos <= node
-			for (int i=1; i<ring.size(); i++){
-				Node addr = ring.at(i);
+			for (int i=1; i<newRing.size(); i++){
+				Node addr = newRing.at(i);
 				if (pos <= addr.getHashCode()) {
 					addr_vec.emplace_back(addr);
-					addr_vec.emplace_back(ring.at((i+1)%ring.size()));
-					addr_vec.emplace_back(ring.at((i+2)%ring.size()));
+					addr_vec.emplace_back(newRing.at((i+1)%ring.size()));
+					addr_vec.emplace_back(newRing.at((i+2)%ring.size()));
 					break;
 				}
 			}
@@ -484,8 +560,25 @@ int MP2Node::enqueueWrapper(void *env, char *buff, int size) {
  *				1) Ensures that there are three "CORRECT" replicas of all the keys in spite of failures and joins
  *				Note:- "CORRECT" replicas implies that every key is replicated in its two neighboring nodes in the ring
  */
-void MP2Node::stabilizationProtocol() {
-	/*
-	 * Implement this
-	 */
+void MP2Node::stabilizationProtocol(vector<Node>& oldRing, vector<Node>& hasMyReplicasDiff, vector<Node>& haveReplicasOfDiff) {
+    size_t myHash = Node(memberNode->addr).nodeHashCode;
+    for (auto item : ht->hashTable) {
+        if (findNodes(item.first).front().nodeHashCode == myHash) {
+            Message createMessage(g_transID, memberNode->addr, CREATE, item.first, item.second);
+            for (auto node: hasMyReplicasDiff) {
+                emulNet->ENsend(&memberNode->addr, node.getAddress(), createMessage.toString());
+            }
+        }
+    }
+    for (auto item : ht->hashTable) {
+        for (auto node : haveReplicasOfDiff) {
+            if (findNodes(item.first, oldRing).front().nodeHashCode == node.nodeHashCode) {
+                Message createMessage(g_transID, memberNode->addr, CREATE, item.first, item.second);
+                for (auto node: hasMyReplicas) {
+                    emulNet->ENsend(&memberNode->addr, node.getAddress(), createMessage.toString());
+                }
+            }
+        }
+    }
+
 }
