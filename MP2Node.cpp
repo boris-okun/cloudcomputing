@@ -47,6 +47,7 @@ void MP2Node::updateRing() {
 	 *  Step 1. Get the current membership list from Membership Protocol / MP1
 	 */
 	curMemList = getMembershipList();
+	curMemList.push_back(Node(memberNode->addr));
 
 	/*
 	 * Step 2: Construct the ring
@@ -160,9 +161,13 @@ void MP2Node::clientUpdate(string key, string value){
  * 				3) Sends a message to the replica
  */
 void MP2Node::clientDelete(string key){
-	/*
-	 * Implement this
-	 */
+	Message createMessage(g_transID, memberNode->addr, DELETE, key);
+	vector<Node> nodes = findNodes(key);
+    for (auto& node : nodes) {
+        emulNet->ENsend(&memberNode->addr, node.getAddress(), createMessage.toString());
+    }
+	WaitList.insert(make_pair(g_transID, TransData(g_transID, DELETE, key)));
+	++g_transID;
 }
 
 /**
@@ -173,9 +178,9 @@ void MP2Node::clientDelete(string key){
  * 			   	1) Inserts key value into the local hash table
  * 			   	2) Return true or false based on success or failure
  */
-bool MP2Node::createKeyValue(string key, string value/*, ReplicaType replica*/) {
-	return ht->hashTable.emplace(key, value).second;
-	// Insert key, value, replicaType into the hash table
+bool MP2Node::createKeyValue(string key, string value, int transId/*, ReplicaType replica*/) {
+    string idVal = to_string(transId) + delimiter + value;
+	return ht->create(key, idVal);
 }
 
 /**
@@ -202,9 +207,6 @@ string MP2Node::readKey(string key) {
  * 				2) Return true or false based on success or failure
  */
 bool MP2Node::updateKeyValue(string key, string value/*, ReplicaType replica*/) {
-	/*
-	 * Implement this
-	 */
 	// Update key in local hash table and return true or false
 }
 
@@ -216,11 +218,8 @@ bool MP2Node::updateKeyValue(string key, string value/*, ReplicaType replica*/) 
  * 				1) Delete the key from the local hash table
  * 				2) Return true or false based on success or failure
  */
-bool MP2Node::deletekey(string key) {
-	/*
-	 * Implement this
-	 */
-	// Delete the key from the local hash table
+bool MP2Node::deleteKey(string key) {
+	return ht->deleteKey(key);
 }
 
 
@@ -230,14 +229,28 @@ void MP2Node::HandleReplies(Message reply) {
         TransData& data = it->second;
         switch (data.type) {
             case (CREATE) :
-            {
-                ++data.replyNumber;
-                if (data.replyNumber >= 2) { //quorum
-                    log->logCreateSuccess(&memberNode->addr, true, reply.transID, data.key, data.value);
-                    WaitList.erase(it);
+                {
+                    ++data.replyNumber;
+                    if (data.replyNumber >= 2) { //quorum
+                        log->logCreateSuccess(&memberNode->addr, true, reply.transID, data.key, data.value);
+                        WaitList.erase(it);
+                    }
                 }
-            }
-            break;
+                break;
+            case (DELETE) :
+                {
+                    if (reply.success) {
+                        ++data.replyNumber;
+                        if (data.replyNumber == 3) { //all replicas
+                            log->logDeleteSuccess(&memberNode->addr, true, reply.transID, data.key);
+                            WaitList.erase(it);
+                        }
+                    } else {
+                        log->logDeleteFail(&memberNode->addr, true, reply.transID, data.key);
+                        WaitList.erase(it);
+                    }
+                }
+                break;
         }
     }
 }
@@ -275,16 +288,28 @@ void MP2Node::checkMessages() {
 
 		switch (msg.type) {
             case (CREATE) :
-            {
-                string transVal = to_string(msg.transID) + delimiter + msg.value;
-                bool success = createKeyValue(msg.key, transVal);
-                Message reply(msg.transID, memberNode->addr, REPLY, success);
-                emulNet->ENsend(&memberNode->addr, &msg.fromAddr, reply.toString());
-                if (success)
-                    log->logCreateSuccess(&memberNode->addr, false, msg.transID, msg.key, msg.value);
-                else
-                    log->logCreateFail(&memberNode->addr, false, msg.transID, msg.key, msg.value);
-            }
+                {
+                    bool success = createKeyValue(msg.key, msg.value, msg.transID);
+                    Message reply(msg.transID, memberNode->addr, REPLY, success);
+                    emulNet->ENsend(&memberNode->addr, &msg.fromAddr, reply.toString());
+                    if (success)
+                        log->logCreateSuccess(&memberNode->addr, false, msg.transID, msg.key, msg.value);
+                    else
+                        log->logCreateFail(&memberNode->addr, false, msg.transID, msg.key, msg.value);
+                }
+                break;
+            case (DELETE) :
+                {
+                    bool success = deleteKey(msg.key);
+                    Message reply(msg.transID, memberNode->addr, REPLY, success);
+                    emulNet->ENsend(&memberNode->addr, &msg.fromAddr, reply.toString());
+                    if (success)
+                        log->logDeleteSuccess(&memberNode->addr, false, msg.transID, msg.key);
+                    else
+                        log->logDeleteFail(&memberNode->addr, false, msg.transID, msg.key);
+                }
+                break;
+
             case (REPLY) :
                 HandleReplies(msg);
             break;
