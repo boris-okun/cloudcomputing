@@ -31,6 +31,11 @@
 enum MsgTypes{
     JOINREQ,
     JOINREP,
+    PINGREQ,
+    PINGREP,
+    LEAVEREQ,
+    LEAVEREP,
+    FAILEDMESSAGE,
     DUMMYLASTMSGTYPE
 };
 
@@ -55,6 +60,7 @@ private:
 	Params *par;
 	Member *memberNode;
 	char NULLADDR[6];
+	vector<MemberListEntry> failedItems;
 
 public:
 	MP1Node(Member *, Params *, EmulNet *, Log *, Address *);
@@ -75,7 +81,24 @@ public:
 	Address getJoinAddress();
 	void initMemberListTable(Member *memberNode);
 	void printAddress(Address *addr);
+	char* packMessage(MsgTypes msgtype, bool pack_data, size_t& msgsize);
+	void addMember(const MemberListEntry& new_entry, long timestamp = 0);
+	void sendMessage(Address& joinaddr, MsgTypes type, bool pack_data);
+	void mergeMembers(const vector<MemberListEntry>& members, long timestamp);
+	bool isFailed(const MemberListEntry& new_entry);
 	virtual ~MP1Node();
+};
+
+struct Message {
+    MsgTypes message_type;
+    Address addr;
+    long heartbeat;
+    vector<MemberListEntry> members;
+    Message();
+    Message(MsgTypes t, Address a, long hb, vector<MemberListEntry> m);
+    //Unpack packed message
+    Message(char* packed_message, size_t message_size);
+    pair<char*, size_t> Pack(bool pack_data);
 };
 
 #endif /* _MP1NODE_H_ */
